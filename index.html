@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FireOps — Wildfire Resource Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Bebas+Neue&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0d0b;
+    --surface: #181410;
+    --surface2: #201c17;
+    --border: #2e2720;
+    --border2: #3d352a;
+    --text: #f0ebe3;
+    --text2: #a89880;
+    --muted: #6b5f52;
+    --fire: #e8632a;
+    --fire-dim: #3d1f0e;
+    --fire-glow: rgba(232,99,42,0.15);
+    --amber: #f0a830;
+    --amber-dim: #3a2800;
+    --green: #4caf6e;
+    --green-dim: #0d2418;
+    --red: #e84040;
+    --red-dim: #2a0a0a;
+    --blue: #4a9fd4;
+    --blue-dim: #0a1e2e;
+    --mono: 'IBM Plex Mono', monospace;
+    --display: 'Bebas Neue', sans-serif;
+    --shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+
+  html, body {
+    font-family: var(--mono);
+    background: var(--bg);
+    color: var(--text);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── HEADER ─────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo-flame {
+    font-size: 20px;
+    animation: flicker 2.4s ease-in-out infinite;
+  }
+  @keyframes flicker {
+    0%,100% { filter: brightness(1); }
+    30% { filter: brightness(1.4) drop-shadow(0 0 6px #e8632a); }
+    60% { filter: brightness(0.9); }
+    80% { filter: brightness(1.2) drop-shadow(0 0 3px #f0a830); }
+  }
+  .logo-text {
+    font-family: var(--display);
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: var(--fire);
+    line-height: 1;
+  }
+  .logo-sub {
+    font-size: 9px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    margin-top: 1px;
+  }
+
+  /* ALERT BANNER */
+  .incident-bar {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--fire-dim);
+    border: 1px solid var(--fire);
+    border-radius: 3px;
+    padding: 4px 14px;
+    font-size: 10px;
+    color: var(--fire);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .pulse-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--fire);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
+  }
+
+  .header-right { display: flex; align-items: center; gap: 12px; }
+
+  .header-stats { display: flex; gap: 1px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .stat {
+    padding: 4px 14px;
+    text-align: center;
+    background: var(--surface2);
+    border-right: 1px solid var(--border);
+  }
+  .stat:last-child { border-right: none; }
+  .stat-num { font-size: 15px; font-weight: 600; }
+  .stat-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+
+  .btn-add {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--fire);
+    color: #fff;
+    border: none;
+    padding: 7px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s;
+  }
+  .btn-add:hover { background: #d4541e; box-shadow: 0 0 12px rgba(232,99,42,0.4); }
+
+  /* ── BODY ────────────────────────────────────────────────── */
+  .app-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+
+  /* ── SIDEBAR ─────────────────────────────────────────────── */
+  .sidebar {
+    width: 300px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .sidebar-top { padding: 12px; border-bottom: 1px solid var(--border); }
+
+  .search-wrap { position: relative; }
+  .search-input {
+    width: 100%;
+    padding: 7px 10px 7px 30px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    border-radius: 3px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-input::placeholder { color: var(--muted); }
+  .search-input:focus { border-color: var(--fire); }
+  .search-icon {
+    position: absolute; left: 9px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted); font-size: 12px;
+  }
+
+  .filter-bar { display: flex; gap: 5px; padding: 10px 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+  .filter-chip {
+    padding: 2px 9px;
+    border: 1px solid var(--border2);
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+    background: none;
+    cursor: pointer;
+    transition: all 0.12s;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .filter-chip:hover { border-color: var(--fire); color: var(--fire); }
+  .filter-chip.active { background: var(--fire); border-color: var(--fire); color: #fff; }
+
+  /* Section headers in sidebar */
+  .section-label {
+    padding: 8px 12px 4px;
+    font-size: 9px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .asset-list { flex: 1; overflow-y: auto; }
+  .asset-list::-webkit-scrollbar { width: 3px; }
+  .asset-list::-webkit-scrollbar-thumb { background: var(--border2); }
+
+  .asset-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    border-bottom: 1px solid var(--border);
+    transition: all 0.1s;
+  }
+  .asset-item:hover { background: var(--surface2); }
+  .asset-item.active { background: var(--fire-dim); border-left-color: var(--fire); }
+
+  .asset-icon {
+    width: 30px; height: 30px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    flex-shrink: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+  }
+
+  .asset-info { flex: 1; min-width: 0; }
+  .asset-name {
+    font-size: 11px; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .asset-meta { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
+  .status-pip {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-pip.deployed { background: var(--fire); box-shadow: 0 0 5px var(--fire); }
+  .status-pip.staged { background: var(--amber); }
+  .status-pip.available { background: var(--green); }
+  .status-pip.oos { background: var(--muted); }
+
+  .empty-state {
+    padding: 32px 16px; text-align: center;
+    color: var(--muted); font-size: 11px;
+  }
+
+  /* ── MAP ─────────────────────────────────────────────────── */
+  .map-container { flex: 1; position: relative; min-width: 0; min-height: 0; }
+  #map { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .map-hint {
+    position: absolute; top: 12px; left: 12px; z-index: 999;
+    background: rgba(15,13,11,0.85);
+    border: 1px solid var(--border2);
+    border-radius: 3px;
+    padding: 6px 12px;
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    backdrop-filter: blur(4px);
+    pointer-events: none;
+  }
+
+  /* ── LEGEND ──────────────────────────────────────────────── */
+  .legend {
+    position: absolute; bottom: 28px; right: 12px; z-index: 999;
+    background: rgba(24,20,16,0.92);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 10px 12px;
+    backdrop-filter: blur(4px);
+  }
+  .legend-title { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 7px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; font-size: 10px; color: var(--text2); }
+  .legend-item:last-child { margin-bottom: 0; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── DETAIL PANEL ────────────────────────────────────────── */
+  .detail-panel {
+    position: absolute;
+    bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 1000;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 5px;
+    width: 460px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    display: none;
+    animation: slideUp 0.18s ease;
+  }
+  .detail-panel.open { display: block; }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  .detail-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    border-radius: 5px 5px 0 0;
+  }
+
+  .detail-icon {
+    width: 38px; height: 38px;
+    border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    flex-shrink: 0;
+  }
+  .detail-title { font-size: 13px; font-weight: 600; }
+  .detail-sub { font-size: 10px; color: var(--text2); margin-top: 2px; }
+  .detail-actions { margin-left: auto; display: flex; gap: 7px; }
+
+  .detail-body {
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+
+  .detail-field label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .detail-value { font-size: 11px; color: var(--text); margin-top: 3px; }
+
+  .detail-notes {
+    grid-column: 1 / -1;
+    padding: 0 16px 14px;
+    font-size: 10px;
+    color: var(--text2);
+    line-height: 1.6;
+    border-top: 1px solid var(--border);
+    margin-top: 0;
+    padding-top: 10px;
+  }
+
+  .panel-close {
+    position: absolute; top: 10px; right: 10px;
+    background: none; border: none;
+    cursor: pointer; color: var(--muted); font-size: 13px;
+  }
+  .panel-close:hover { color: var(--text); }
+
+  /* Status badges */
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 2px;
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .status-badge.deployed { background: var(--fire-dim); color: var(--fire); border: 1px solid var(--fire); }
+  .status-badge.staged { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
+  .status-badge.available { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+  .status-badge.oos { background: #1a1a1a; color: var(--muted); border: 1px solid var(--border2); }
+
+  /* ── MODAL ───────────────────────────────────────────────── */
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 2000;
+    align-items: center; justify-content: center;
+    backdrop-filter: blur(3px);
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 5px;
+    width: 460px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+    animation: modalIn 0.18s ease;
+  }
+  @keyframes modalIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .modal-title {
+    font-family: var(--display);
+    font-size: 18px;
+    letter-spacing: 1.5px;
+    color: var(--fire);
+  }
+  .modal-close {
+    background: none; border: none;
+    font-size: 16px; cursor: pointer; color: var(--muted);
+  }
+  .modal-close:hover { color: var(--text); }
+
+  .modal-body { padding: 18px 20px; }
+
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-group { margin-bottom: 14px; }
+  .form-group.full { grid-column: 1 / -1; }
+
+  label {
+    display: block;
+    font-size: 9px; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted);
+    margin-bottom: 5px;
+  }
+
+  input, select, textarea {
+    width: 100%;
+    padding: 7px 11px;
+    border: 1px solid var(--border2);
+    background: var(--bg);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    border-radius: 3px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--fire); }
+  input::placeholder, textarea::placeholder { color: var(--muted); }
+  select option { background: var(--surface); }
+  textarea { resize: vertical; min-height: 68px; }
+
+  .coord-hint { font-size: 9px; color: var(--muted); margin-top: 4px; }
+
+  .modal-footer {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+  }
+
+  .btn {
+    padding: 7px 16px; border-radius: 3px;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    cursor: pointer; border: none; transition: all 0.15s;
+  }
+  .btn-primary { background: var(--fire); color: #fff; }
+  .btn-primary:hover { background: #d4541e; }
+  .btn-ghost { background: none; border: 1px solid var(--border2); color: var(--text2); }
+  .btn-ghost:hover { border-color: var(--text2); color: var(--text); }
+  .btn-danger { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+  .btn-danger:hover { background: var(--red); color: #fff; }
+  .btn-sm { padding: 4px 11px; font-size: 10px; }
+
+  /* ── MONITOR KML BAR ─────────────────────────────────────── */
+  .kml-bar {
+    position: absolute; top: 12px; right: 12px; z-index: 999;
+    background: rgba(24,20,16,0.92);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 10px;
+    backdrop-filter: blur(4px);
+    display: flex; align-items: center; gap: 10px;
+    min-width: 200px;
+  }
+  .kml-title { color: var(--blue); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-size: 9px; }
+  .kml-count { color: var(--text2); font-size: 10px; }
+  .kml-refresh { font-size: 9px; color: var(--muted); margin-left: auto; }
+  .kml-spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .kml-err { color: var(--red); font-size: 9px; }
+
+  /* Leaflet dark overrides */
+  .leaflet-tile { filter: brightness(0.85) saturate(0.7) sepia(0.15); }
+  .leaflet-control-zoom a {
+    background: var(--surface2) !important;
+    color: var(--text2) !important;
+    border-color: var(--border2) !important;
+  }
+  .leaflet-control-zoom a:hover { background: var(--border2) !important; color: var(--text) !important; }
+  .leaflet-control-attribution { background: rgba(15,13,11,0.7) !important; color: var(--muted) !important; font-size: 9px !important; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+  .kml-popup .leaflet-popup-content-wrapper {
+    background: #181410;
+    border: 1px solid #3d352a;
+    color: #f0ebe3;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    border-radius: 5px;
+    padding: 10px 14px;
+  }
+  .kml-popup .leaflet-popup-content { margin: 0; }
+  .kml-popup .leaflet-popup-close-button { color: #6b5f52 !important; top: 8px !important; right: 8px !important; }
+  .kml-popup .leaflet-popup-tip-container { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-flame">🔥</div>
+    <div>
+      <div class="logo-text">FireOps</div>
+      <div class="logo-sub">Wildfire Resource Manager</div>
+    </div>
+  </div>
+
+  <div class="incident-bar">
+    <div class="pulse-dot"></div>
+    <span id="incident-name">Active Incident Monitor</span>
+  </div>
+
+  <div class="header-right">
+    <div class="header-stats">
+      <div class="stat">
+        <div class="stat-num" id="stat-total" style="color:var(--text)">0</div>
+        <div class="stat-label">Total</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num" id="stat-deployed" style="color:var(--fire)">0</div>
+        <div class="stat-label">Deployed</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num" id="stat-staged" style="color:var(--amber)">0</div>
+        <div class="stat-label">Staged</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num" id="stat-available" style="color:var(--green)">0</div>
+        <div class="stat-label">Available</div>
+      </div>
+    </div>
+    <button class="btn-add" onclick="openModal()">+ Deploy Resource</button>
+  </div>
+</header>
+
+<div class="app-body">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-top">
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input class="search-input" type="text" placeholder="Search resources..." id="search-input" oninput="renderList()">
+      </div>
+    </div>
+    <div class="filter-bar">
+      <button class="filter-chip active" onclick="setFilter('all',this)">All</button>
+      <button class="filter-chip" onclick="setFilter('deployed',this)">Deployed</button>
+      <button class="filter-chip" onclick="setFilter('staged',this)">Staged</button>
+      <button class="filter-chip" onclick="setFilter('available',this)">Available</button>
+      <button class="filter-chip" onclick="setFilter('oos',this)">OOS</button>
+    </div>
+    <div class="asset-list" id="asset-list"></div>
+  </div>
+
+  <!-- MAP -->
+  <div class="map-container">
+    <div id="map"></div>
+    <div class="map-hint">Click map to set coordinates when adding a resource</div>
+
+    <!-- MONITOR KML bar -->
+    <div class="kml-bar" id="kml-bar">
+      <span>📡</span>
+      <div>
+        <div class="kml-title">MONITOR Feed</div>
+        <div class="kml-count" id="kml-count">Connecting...</div>
+      </div>
+      <div class="kml-refresh" id="kml-refresh">—</div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <div class="legend-title">Operational Status</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--fire);box-shadow:0 0 5px var(--fire)"></div>Deployed / On Fire</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Staged / Prepositioned</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Available</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--muted)"></div>Out of Service</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--blue);box-shadow:0 0 5px var(--blue)"></div>MONITOR Live Unit</div>
+    </div>
+
+    <!-- Detail Panel -->
+    <div class="detail-panel" id="detail-panel">
+      <button class="panel-close" onclick="closeDetail()">✕</button>
+      <div class="detail-header">
+        <div class="detail-icon" id="d-icon"></div>
+        <div>
+          <div class="detail-title" id="d-name"></div>
+          <div class="detail-sub" id="d-type"></div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn btn-ghost btn-sm" onclick="editCurrent()">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCurrent()">Remove</button>
+        </div>
+      </div>
+      <div class="detail-body">
+        <div class="detail-field">
+          <label>Status</label>
+          <div class="detail-value" id="d-status"></div>
+        </div>
+        <div class="detail-field">
+          <label>Assignment</label>
+          <div class="detail-value" id="d-assignment"></div>
+        </div>
+        <div class="detail-field">
+          <label>Crew / Capacity</label>
+          <div class="detail-value" id="d-capacity"></div>
+        </div>
+        <div class="detail-field">
+          <label>Coordinates</label>
+          <div class="detail-value" id="d-coords"></div>
+        </div>
+        <div class="detail-field">
+          <label>Resource ID</label>
+          <div class="detail-value" id="d-serial"></div>
+        </div>
+        <div class="detail-field">
+          <label>Last Updated</label>
+          <div class="detail-value" id="d-date"></div>
+        </div>
+      </div>
+      <div class="detail-notes" id="d-notes-wrap">
+        <label>Notes / Situation</label>
+        <div id="d-notes" style="margin-top:4px"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Deploy Resource</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Resource Name *</label>
+          <input type="text" id="f-name" placeholder="e.g. Engine 42, Crew 7">
+        </div>
+        <div class="form-group">
+          <label>Resource Type *</label>
+          <select id="f-type">
+            <option value="">Select type...</option>
+            <optgroup label="Ground Resources">
+              <option value="🚒 Type 1 Engine">🚒 Type 1 Engine</option>
+              <option value="🚒 Type 3 Engine">🚒 Type 3 Engine</option>
+              <option value="🚒 Type 6 Engine">🚒 Type 6 Engine</option>
+              <option value="🚛 Water Tender">🚛 Water Tender</option>
+              <option value="🚧 Dozer">🚧 Dozer</option>
+              <option value="👷 Hand Crew">👷 Hand Crew</option>
+              <option value="🧑‍🚒 Hotshot Crew">🧑‍🚒 Hotshot Crew</option>
+              <option value="🚑 Medic / EMS">🚑 Medic / EMS</option>
+              <option value="🚐 Transport">🚐 Transport</option>
+            </optgroup>
+            <optgroup label="Air Resources">
+              <option value="🚁 Helicopter">🚁 Helicopter</option>
+              <option value="✈️ Single Engine Tanker">✈️ Single Engine Tanker</option>
+              <option value="✈️ VLAT">✈️ VLAT (Very Large Air Tanker)</option>
+              <option value="✈️ Air Attack">✈️ Air Attack</option>
+            </optgroup>
+            <optgroup label="Facilities">
+              <option value="🏕️ Spike Camp">🏕️ Spike Camp</option>
+              <option value="🏠 Base Camp">🏠 Base Camp</option>
+              <option value="⛽ Retardant Base">⛽ Retardant Base</option>
+              <option value="🛬 Helibase">🛬 Helibase</option>
+              <option value="📡 Communications">📡 Communications</option>
+              <option value="⚡ Generator">⚡ Generator</option>
+            </optgroup>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Operational Status</label>
+          <select id="f-status">
+            <option value="available">Available</option>
+            <option value="staged">Staged / Prepositioned</option>
+            <option value="deployed">Deployed / On Fire</option>
+            <option value="oos">Out of Service</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Resource ID</label>
+          <input type="text" id="f-serial" placeholder="e.g. CAL-E42, NWCG-07">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Assignment / Division</label>
+          <input type="text" id="f-assignment" placeholder="e.g. Division Alpha, ICP">
+        </div>
+        <div class="form-group">
+          <label>Crew / Capacity</label>
+          <input type="text" id="f-capacity" placeholder="e.g. 20 persons, 3000 gal">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Latitude *</label>
+          <input type="number" id="f-lat" step="0.0001" placeholder="e.g. 37.4419">
+          <div class="coord-hint" id="coord-hint">Or click the map to fill coordinates</div>
+        </div>
+        <div class="form-group">
+          <label>Longitude *</label>
+          <input type="number" id="f-lng" step="0.0001" placeholder="e.g. -122.1430">
+        </div>
+      </div>
+      <div class="form-group full">
+        <label>Situation Notes</label>
+        <textarea id="f-notes" placeholder="Current assignment, conditions, operational notes..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAsset()">Save Resource</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let assets = JSON.parse(localStorage.getItem('fireops_v2') || '[]');
+let editingId = null;
+let currentFilter = 'all';
+let selectedId = null;
+let markers = {};
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+function save() {
+  localStorage.setItem('fireops_v2', JSON.stringify(assets));
+  updateStats();
+}
+
+// Seed data — wildfire scenario in Los Angeles area
+if (assets.length === 0) {
+  assets = [
+    { id: uid(), name: 'Engine 42', type: '🚒 Type 3 Engine', status: 'deployed', serial: 'CAL-E42', assignment: 'Division Alpha', capacity: '500 gal / 3 crew', lat: 34.2215, lng: -118.5128, notes: 'Holding structure protection on Mulholland. Active ember cast.', updated: '2025-08-14' },
+    { id: uid(), name: 'Hotshot Crew 7', type: '🧑‍🚒 Hotshot Crew', status: 'deployed', serial: 'NWCG-HS7', assignment: 'Division Bravo', capacity: '20 persons', lat: 34.2361, lng: -118.4997, notes: 'Line construction on north flank. 2 miles completed.', updated: '2025-08-14' },
+    { id: uid(), name: 'Helitanker 5', type: '🚁 Helicopter', status: 'deployed', serial: 'CAL-H5', assignment: 'Air Operations', capacity: '2000 gal', lat: 34.2289, lng: -118.5384, notes: 'Water drops on spot fires near canyon head.', updated: '2025-08-14' },
+    { id: uid(), name: 'Dozer D-14', type: '🚧 Dozer', status: 'staged', serial: 'CAL-D14', assignment: 'Division Charlie', capacity: 'Cat D8', lat: 34.2448, lng: -118.5233, notes: 'Pre-positioned at staging. Awaiting line assignment.', updated: '2025-08-14' },
+    { id: uid(), name: 'Water Tender W3', type: '🚛 Water Tender', status: 'staged', serial: 'CAL-WT3', assignment: 'Logistics', capacity: '4000 gal', lat: 34.2102, lng: -118.5044, notes: 'At Engine Camp. Filling rotation for Division Alpha.', updated: '2025-08-14' },
+    { id: uid(), name: 'VLAT Bomber 910', type: '✈️ VLAT', status: 'available', serial: 'T-910', assignment: 'Air Base', capacity: '19000 gal retardant', lat: 34.2576, lng: -118.4721, notes: 'On standby at Fox Field. Ready for drop on request.', updated: '2025-08-14' },
+    { id: uid(), name: 'Base Camp Alpha', type: '🏠 Base Camp', status: 'available', serial: 'BC-01', assignment: 'ICP', capacity: '500 personnel', lat: 34.2089, lng: -118.5311, notes: 'Full ICP established. Meal service active.', updated: '2025-08-14' },
+    { id: uid(), name: 'Engine 17', type: '🚒 Type 1 Engine', status: 'oos', serial: 'CAL-E17', assignment: 'Unassigned', capacity: '750 gal / 4 crew', lat: 34.2503, lng: -118.5489, notes: 'Pump failure — awaiting part. ETA 18 hrs.', updated: '2025-08-14' },
+  ];
+  save();
+}
+
+// ─── MAP ─────────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false }).setView([34.228, -118.510], 13);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '©OpenStreetMap ©CARTO',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+map.on('click', (e) => {
+  if (document.getElementById('modal').classList.contains('open')) {
+    document.getElementById('f-lat').value = e.latlng.lat.toFixed(5);
+    document.getElementById('f-lng').value = e.latlng.lng.toFixed(5);
+    const hint = document.getElementById('coord-hint');
+    hint.textContent = '✓ Coordinates set from map';
+    hint.style.color = '#4caf6e';
+  }
+});
+
+function statusColor(s) {
+  return s === 'deployed' ? '#e8632a'
+       : s === 'staged'   ? '#f0a830'
+       : s === 'available'? '#4caf6e'
+       : '#6b5f52';
+}
+
+function makeIcon(type, status) {
+  const emoji = type ? type.split(' ')[0] : '📍';
+  const c = statusColor(status);
+  const glow = status === 'deployed' ? `box-shadow:0 0 8px ${c},0 0 16px ${c}40;` : '';
+  return L.divIcon({
+    className: '',
+    html: `<div style="position:relative;width:34px;height:34px;">
+      <div style="position:absolute;inset:0;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${c};${glow}border:1.5px solid rgba(255,255,255,0.3);"></div>
+      <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;padding-bottom:3px;">${emoji}</span>
+    </div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 34],
+  });
+}
+
+function renderMarkers() {
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+  assets.forEach(a => {
+    if (!a.lat || !a.lng) return;
+    const m = L.marker([a.lat, a.lng], { icon: makeIcon(a.type, a.status) })
+      .addTo(map)
+      .on('click', () => selectAsset(a.id));
+    markers[a.id] = m;
+  });
+}
+
+// ─── LIST ─────────────────────────────────────────────────────────────────────
+function renderList() {
+  const q = document.getElementById('search-input').value.toLowerCase();
+  const list = document.getElementById('asset-list');
+  const filtered = assets.filter(a => {
+    const mf = currentFilter === 'all' || a.status === currentFilter;
+    const ms = !q || a.name.toLowerCase().includes(q) || (a.type||'').toLowerCase().includes(q) || (a.assignment||'').toLowerCase().includes(q);
+    return mf && ms;
+  });
+
+  if (filtered.length === 0) {
+    list.innerHTML = `<div class="empty-state">No resources found</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(a => `
+    <div class="asset-item ${selectedId === a.id ? 'active' : ''}" onclick="selectAsset('${a.id}')">
+      <div class="asset-icon">${a.type ? a.type.split(' ')[0] : '📍'}</div>
+      <div class="asset-info">
+        <div class="asset-name">${a.name}</div>
+        <div class="asset-meta">${a.assignment || '—'} · ${a.serial || '—'}</div>
+      </div>
+      <div class="status-pip ${a.status}"></div>
+    </div>
+  `).join('');
+}
+
+function setFilter(f, el) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+}
+
+// ─── STATS ────────────────────────────────────────────────────────────────────
+function updateStats() {
+  document.getElementById('stat-total').textContent = assets.length;
+  document.getElementById('stat-deployed').textContent = assets.filter(a => a.status === 'deployed').length;
+  document.getElementById('stat-staged').textContent = assets.filter(a => a.status === 'staged').length;
+  document.getElementById('stat-available').textContent = assets.filter(a => a.status === 'available').length;
+}
+
+// ─── SELECT ───────────────────────────────────────────────────────────────────
+function selectAsset(id) {
+  selectedId = id;
+  const a = assets.find(x => x.id === id);
+  if (!a) return;
+  renderList();
+  if (a.lat && a.lng) map.setView([a.lat, a.lng], 15, { animate: true });
+
+  document.getElementById('d-icon').textContent = a.type ? a.type.split(' ')[0] : '📍';
+  document.getElementById('d-name').textContent = a.name;
+  document.getElementById('d-type').textContent = `${a.type || 'Unknown'} · ${a.serial || 'No ID'}`;
+  document.getElementById('d-status').innerHTML = `<span class="status-badge ${a.status}">${a.status === 'oos' ? 'Out of Service' : a.status}</span>`;
+  document.getElementById('d-assignment').textContent = a.assignment || '—';
+  document.getElementById('d-capacity').textContent = a.capacity || '—';
+  document.getElementById('d-coords').textContent = a.lat ? `${parseFloat(a.lat).toFixed(4)}, ${parseFloat(a.lng).toFixed(4)}` : '—';
+  document.getElementById('d-serial').textContent = a.serial || '—';
+  document.getElementById('d-date').textContent = a.updated || '—';
+  document.getElementById('d-notes').textContent = a.notes || '—';
+
+  document.getElementById('detail-panel').classList.add('open');
+}
+
+function closeDetail() {
+  selectedId = null;
+  document.getElementById('detail-panel').classList.remove('open');
+  renderList();
+}
+
+// ─── MODAL ────────────────────────────────────────────────────────────────────
+function openModal(id) {
+  editingId = id || null;
+  document.getElementById('modal-title').textContent = id ? 'Edit Resource' : 'Deploy Resource';
+  const hint = document.getElementById('coord-hint');
+  hint.textContent = 'Or click the map to fill coordinates';
+  hint.style.color = '';
+
+  if (id) {
+    const a = assets.find(x => x.id === id);
+    document.getElementById('f-name').value = a.name;
+    document.getElementById('f-type').value = a.type;
+    document.getElementById('f-status').value = a.status;
+    document.getElementById('f-serial').value = a.serial || '';
+    document.getElementById('f-assignment').value = a.assignment || '';
+    document.getElementById('f-capacity').value = a.capacity || '';
+    document.getElementById('f-lat').value = a.lat || '';
+    document.getElementById('f-lng').value = a.lng || '';
+    document.getElementById('f-notes').value = a.notes || '';
+  } else {
+    ['f-name','f-serial','f-assignment','f-capacity','f-lat','f-lng','f-notes'].forEach(fid => document.getElementById(fid).value = '');
+    document.getElementById('f-type').value = '';
+    document.getElementById('f-status').value = 'available';
+  }
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+function saveAsset() {
+  const name = document.getElementById('f-name').value.trim();
+  const type = document.getElementById('f-type').value;
+  const lat = parseFloat(document.getElementById('f-lat').value);
+  const lng = parseFloat(document.getElementById('f-lng').value);
+
+  if (!name) { alert('Resource name is required.'); return; }
+  if (!type) { alert('Please select a resource type.'); return; }
+  if (isNaN(lat) || isNaN(lng)) { alert('Valid coordinates are required.'); return; }
+
+  const data = {
+    name, type,
+    status: document.getElementById('f-status').value,
+    serial: document.getElementById('f-serial').value.trim(),
+    assignment: document.getElementById('f-assignment').value.trim(),
+    capacity: document.getElementById('f-capacity').value.trim(),
+    lat, lng,
+    notes: document.getElementById('f-notes').value.trim(),
+    updated: new Date().toISOString().split('T')[0],
+  };
+
+  if (editingId) {
+    const idx = assets.findIndex(a => a.id === editingId);
+    assets[idx] = { ...assets[idx], ...data };
+  } else {
+    assets.push({ id: uid(), ...data });
+  }
+
+  save();
+  closeModal();
+  renderMarkers();
+  renderList();
+  if (editingId) selectAsset(editingId);
+}
+
+function editCurrent() { if (selectedId) openModal(selectedId); }
+
+function deleteCurrent() {
+  if (!selectedId) return;
+  const a = assets.find(x => x.id === selectedId);
+  if (!confirm(`Remove "${a.name}" from the incident? This cannot be undone.`)) return;
+  assets = assets.filter(x => x.id !== selectedId);
+  save();
+  closeDetail();
+  renderMarkers();
+  renderList();
+}
+
+// ─── MONITOR KML LIVE FEED ───────────────────────────────────────────────────
+const KML_URL_DIRECT = 'https://nexe.online/api/position/kml/update?api_key=c1e5ab04-9891-4c3c-8bcf-5912f861bbe8';
+
+// ── CONFIGURE YOUR CLOUDFLARE WORKER URL HERE ──────────────────────────────
+// After deploying kml-proxy-worker.js to Cloudflare Workers, paste your
+// worker URL below (e.g. 'https://fireops-kml.your-name.workers.dev/kml')
+// Leave as null to skip and fall through to other proxies.
+const CF_WORKER_URL = null;
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CORS_PROXIES = [
+  u => CF_WORKER_URL || null,                                        // Cloudflare Worker (best for GitHub Pages)
+  u => `http://localhost:8765/kml`,                                  // Local Python proxy (best for local use)
+  u => `https://corsproxy.io/?${encodeURIComponent(u)}`,            // Public fallback 1
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, // Public fallback 2
+].filter(fn => fn(KML_URL_DIRECT) !== null);
+let workingProxy = null; // cache whichever proxy works first
+const REFRESH_INTERVAL = 30000;
+let kmlMarkers = {};
+let kmlRefreshTimer = null;
+
+function parseKML(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'application/xml');
+  const ns = 'http://www.opengis.net/kml/2.2';
+
+  // Try both namespaced and non-namespaced
+  const placemarks = [...doc.getElementsByTagNameNS(ns, 'Placemark'),
+                      ...doc.getElementsByTagName('Placemark')];
+  const unique = [...new Map(placemarks.map(p => [p, p])).keys()];
+
+  return unique.map(pm => {
+    const getText = (tag) => {
+      const el = pm.getElementsByTagNameNS(ns, tag)[0] || pm.getElementsByTagName(tag)[0];
+      return el ? el.textContent.trim() : '';
+    };
+    const name = getText('name');
+    const desc = getText('description');
+
+    // Parse coordinates
+    const coordEl = pm.getElementsByTagNameNS(ns, 'coordinates')[0]
+                 || pm.getElementsByTagName('coordinates')[0];
+    if (!coordEl) return null;
+    const parts = coordEl.textContent.trim().split(',');
+    const lng = parseFloat(parts[0]);
+    const lat = parseFloat(parts[1]);
+    if (isNaN(lat) || isNaN(lng)) return null;
+
+    // Try to pull speed / heading / time from ExtendedData or description
+    const extData = {};
+    const simpleData = pm.querySelectorAll ? pm.querySelectorAll('SimpleData') : [];
+    simpleData.forEach(sd => { extData[sd.getAttribute('name')] = sd.textContent.trim(); });
+
+    // Also parse description HTML for key-value pairs
+    if (desc) {
+      const rows = desc.match(/([A-Za-z ]+):\s*([^\n<]+)/g) || [];
+      rows.forEach(r => {
+        const [k, ...v] = r.split(':');
+        extData[k.trim()] = v.join(':').trim();
+      });
+    }
+
+    return { name, desc, lat, lng, extData };
+  }).filter(Boolean);
+}
+
+function makeKmlIcon(name) {
+  const initials = name ? name.slice(0,2).toUpperCase() : '??';
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:36px;height:36px;border-radius:50%;
+      background:#0a1e2e;border:2px solid #4a9fd4;
+      box-shadow:0 0 10px #4a9fd480;
+      display:flex;align-items:center;justify-content:center;
+      font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+      color:#4a9fd4;line-height:1;
+    ">${initials}</div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+  });
+}
+
+function buildPopup(unit) {
+  const rows = Object.entries(unit.extData)
+    .filter(([k,v]) => v && v !== 'undefined')
+    .map(([k,v]) => `<tr><td style="color:#6b5f52;padding:2px 8px 2px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.06em">${k}</td><td style="font-size:11px;color:#f0ebe3">${v}</td></tr>`)
+    .join('');
+
+  return `<div style="font-family:'IBM Plex Mono',monospace;min-width:180px;background:#181410;border-radius:4px;padding:4px 0">
+    <div style="font-size:13px;font-weight:600;color:#4a9fd4;padding:0 0 6px;border-bottom:1px solid #2e2720;margin-bottom:6px">${unit.name}</div>
+    ${rows ? `<table style="border-collapse:collapse;width:100%">${rows}</table>` : `<div style="color:#6b5f52;font-size:10px">${unit.desc || 'No data'}</div>`}
+    <div style="font-size:9px;color:#6b5f52;margin-top:6px;padding-top:5px;border-top:1px solid #2e2720">📡 MONITOR Live · ${parseFloat(unit.lat).toFixed(5)}, ${parseFloat(unit.lng).toFixed(5)}</div>
+  </div>`;
+}
+
+async function tryFetch(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  if (!text.includes('<kml') && !text.includes('<Placemark') && !text.includes('<NetworkLink')) {
+    throw new Error('Not valid KML');
+  }
+  return text;
+}
+
+async function fetchKML() {
+  const countEl = document.getElementById('kml-count');
+  const refreshEl = document.getElementById('kml-refresh');
+  refreshEl.innerHTML = '<span class="kml-spin">↻</span>';
+
+  let text = null;
+  let lastErr = null;
+
+  // If we already found a working proxy, use it directly
+  const proxiesToTry = workingProxy
+    ? [workingProxy]
+    : CORS_PROXIES.map(fn => fn(KML_URL_DIRECT));
+
+  for (const proxyUrl of proxiesToTry) {
+    try {
+      text = await tryFetch(proxyUrl);
+      workingProxy = proxyUrl; // remember what worked
+      break;
+    } catch (e) {
+      lastErr = e;
+      console.warn('Proxy failed:', proxyUrl, e.message);
+    }
+  }
+
+  if (!text) {
+    // Reset working proxy so next refresh tries all again
+    workingProxy = null;
+    countEl.innerHTML = `<span class="kml-err">⚠ Run fireops-proxy.py</span>`;
+    refreshEl.title = 'python3 fireops-proxy.py';
+    refreshEl.textContent = 'See instructions ↓';
+    // Show banner hint
+    document.getElementById('kml-bar').title = 'Run: python3 fireops-proxy.py — then reload';
+    console.warn('All KML proxies failed. Run fireops-proxy.py to fix CORS.\n  python3 fireops-proxy.py');
+    return;
+  }
+
+  try {
+    const units = parseKML(text);
+
+    // Remove stale markers
+    const newNames = new Set(units.map(u => u.name));
+    Object.entries(kmlMarkers).forEach(([n, m]) => {
+      if (!newNames.has(n)) { map.removeLayer(m); delete kmlMarkers[n]; }
+    });
+
+    // Add / update markers
+    const isFirst = Object.keys(kmlMarkers).length === 0 && units.length > 0;
+    units.forEach(u => {
+      const popup = buildPopup(u);
+      if (kmlMarkers[u.name]) {
+        kmlMarkers[u.name].setLatLng([u.lat, u.lng]);
+        kmlMarkers[u.name].setPopupContent(popup);
+      } else {
+        kmlMarkers[u.name] = L.marker([u.lat, u.lng], { icon: makeKmlIcon(u.name), zIndexOffset: 500 })
+          .addTo(map)
+          .bindPopup(popup, { className: 'kml-popup', maxWidth: 280 });
+      }
+    });
+
+    countEl.textContent = `${units.length} unit${units.length !== 1 ? 's' : ''} tracked`;
+    countEl.style.color = '#4a9fd4';
+    refreshEl.textContent = `↺ ${new Date().toLocaleTimeString()}`;
+
+    // First load: fit map to units
+    if (isFirst) {
+      try {
+        const bounds = L.latLngBounds(units.map(u => [u.lat, u.lng]));
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.3));
+      } catch(e) {}
+    }
+
+    if (units.length === 0) {
+      countEl.textContent = 'Feed live — 0 units reported';
+      countEl.style.color = '#6b5f52';
+    }
+
+  } catch (parseErr) {
+    countEl.innerHTML = `<span class="kml-err">⚠ Parse error</span>`;
+    refreshEl.textContent = 'Check console';
+    console.warn('KML parse error:', parseErr, text?.slice(0, 300));
+  }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+renderMarkers();
+renderList();
+updateStats();
+
+// Force Leaflet to recalculate size after the DOM has fully painted
+setTimeout(() => {
+  map.invalidateSize();
+  // Start MONITOR live feed
+  fetchKML();
+  kmlRefreshTimer = setInterval(fetchKML, REFRESH_INTERVAL);
+}, 100);
+</script>
+</body>
+</html>
